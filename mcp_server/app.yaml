@@ -1,0 +1,13 @@
+command: ["sh", "-c", "pip install -r requirements.txt && uvicorn movie_mcp_server:app --host 0.0.0.0 --port 8000"]
+
+env:
+  - name: LAKEBASE_SECRET_SCOPE
+    value: "database"
+  - name: LAKEBASE_SECRET_KEY
+    value: "mcp-movie-lakebase-url"
+  - name: TMDB_SECRET_SCOPE
+    value: "movie-planner"
+  - name: TMDB_SECRET_KEY
+    value: "tmdb-access-token"
+  - name: EMBEDDING_MODEL
+    value: "sentence-transformers/all-MiniLM-L6-v2"
