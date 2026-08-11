@@ -1,9 +1,22 @@
-databricks-sdk>=0.30.0
+# Core Databricks and Database
+databricks-sdk>=0.118.0
 psycopg2-binary>=2.9.9
 sqlalchemy>=2.0.30
+
+# MCP Server Framework
 fastmcp>=0.1.0
-requests>=2.31.0
-sentence-transformers>=2.2.0
+fastapi>=0.100.0
+starlette>=0.27.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.0.0
-fastapi>=0.100.0
+
+# HTTP and Retry Logic
+requests>=2.31.0
+tenacity>=8.2.0
+
+# ML and Embeddings
+sentence-transformers>=2.2.0
+
+# Development (optional)
+python-dotenv>=1.0.0
+ipython>=8.0.0

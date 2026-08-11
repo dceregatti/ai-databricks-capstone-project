@@ -334,8 +334,16 @@ def semantic_movie_search(query: str, limit: int = 10) -> dict:
         Standardized response with matching movies
     """
     try:
-        # Use pgvector similarity search
-        # This requires embeddings to be pre-computed for movies
+        # FIXED: Compute query embedding before passing to SQL
+        logger.info(f"Computing embedding for query: {query}")
+        model = get_embedding_model()
+        query_embedding = model.encode(query).tolist()
+        
+        # Format the embedding as a PostgreSQL array literal
+        # pgvector requires proper array format: '[1.0, 2.0, 3.0]'
+        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+        
+        # Use pgvector similarity search with properly computed embeddings
         results = lakebase.run_query(
             """
             SELECT m.*, 
@@ -345,7 +353,7 @@ def semantic_movie_search(query: str, limit: int = 10) -> dict:
             ORDER BY e.embedding <=> %s::vector
             LIMIT %s
             """,
-            (query, query, limit)
+            (embedding_str, embedding_str, limit)
         )
 
         return standardize_response(
@@ -899,6 +907,29 @@ async def dashboard_home(request):
             color: #f39c12;
             margin-left: 15px;
         }
+        .watched-rating-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 5px;
+        }
+        .star-rating {
+            display: flex;
+            gap: 3px;
+            cursor: pointer;
+        }
+        .star {
+            font-size: 1.5em;
+            color: #ddd;
+            transition: color 0.2s ease;
+        }
+        .star:hover,
+        .star.filled {
+            color: #f39c12;
+        }
+        .star:hover ~ .star {
+            color: #ddd;
+        }
         .loading {
             text-align: center;
             padding: 40px;
@@ -966,53 +997,74 @@ async def dashboard_home(request):
             try {
                 const statsRes = await fetch('/api/watchlist-stats');
                 const stats = await statsRes.json();
-                document.getElementById('stat-total').textContent = stats.total;
-                document.getElementById('stat-watched').textContent = stats.watched;
-                document.getElementById('stat-rated').textContent = stats.rated;
-                document.getElementById('stat-avg-rating').textContent = stats.avg_rating.toFixed(1) + '⭐';
+                
+                // Check for API errors
+                if (stats.error) {
+                    throw new Error('Failed to load stats: ' + stats.error);
+                }
+                
+                document.getElementById('stat-total').textContent = stats.total || 0;
+                document.getElementById('stat-watched').textContent = stats.watched || 0;
+                document.getElementById('stat-rated').textContent = stats.rated || 0;
+                document.getElementById('stat-avg-rating').textContent = 
+                    (stats.avg_rating != null ? stats.avg_rating.toFixed(1) : '0.0') + '⭐';
                 
                 const topRatedRes = await fetch('/api/top-rated');
                 const topRated = await topRatedRes.json();
+                
+                // Check for API errors and empty arrays
+                if (topRated.error) {
+                    console.warn('Failed to load top rated:', topRated.error);
+                }
+                
                 const topMoviesList = document.getElementById('top-movies-list');
-                topMoviesList.innerHTML = topRated.map((movie, index) => `
-                    <div class="movie-item">
-                        <img src="https://image.tmdb.org/t/p/w500${movie.poster_path || ''}" 
-                             class="movie-poster" 
-                             onerror="this.src='https://via.placeholder.com/200x300?text=No+Poster'"
-                             alt="${movie.title}">
-                        <div class="movie-title">${index + 1}. ${movie.title}</div>
-                        <div class="movie-rating">${movie.avg_rating.toFixed(1)} ⭐</div>
-                        <div style="color: #999; font-size: 0.9em;">(${movie.rating_count} ratings)</div>
-                    </div>
-                `).join('');
+                if (Array.isArray(topRated) && topRated.length > 0) {
+                    topMoviesList.innerHTML = topRated.map((movie, index) => `
+                        <div class="movie-item">
+                            <img src="https://image.tmdb.org/t/p/w500${movie.poster_path || ''}" 
+                                 class="movie-poster" 
+                                 onerror="this.src='https://via.placeholder.com/200x300?text=No+Poster'"
+                                 alt="${movie.title}">
+                            <div class="movie-title">${index + 1}. ${movie.title}</div>
+                            <div class="movie-rating">${(movie.avg_rating != null ? movie.avg_rating.toFixed(1) : '0.0')} ⭐</div>
+                            <div style="color: #999; font-size: 0.9em;">(${movie.rating_count || 0} ratings)</div>
+                        </div>
+                    `).join('');
+                } else {
+                    topMoviesList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No rated movies yet. Start rating movies to see them here!</div>';
+                }
                 
                 const ratingDistRes = await fetch('/api/rating-distribution');
                 const ratingDist = await ratingDistRes.json();
-                const ratingChart = new Chart(document.getElementById('rating-chart'), {
-                    type: 'bar',
-                    data: {
-                        labels: ratingDist.map(d => d.rating_floor + ' stars'),
-                        datasets: [{
-                            label: 'Number of Ratings',
-                            data: ratingDist.map(d => d.count),
-                            backgroundColor: 'rgba(102, 126, 234, 0.8)',
-                            borderColor: 'rgba(102, 126, 234, 1)',
-                            borderWidth: 2
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: false } },
-                        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
-                    }
-                });
+                
+                // Only create rating chart if we have data
+                if (Array.isArray(ratingDist) && ratingDist.length > 0 && !ratingDist.error) {
+                    const ratingChart = new Chart(document.getElementById('rating-chart'), {
+                        type: 'bar',
+                        data: {
+                            labels: ratingDist.map(d => d.rating_floor + ' stars'),
+                            datasets: [{
+                                label: 'Number of Ratings',
+                                data: ratingDist.map(d => d.count),
+                                backgroundColor: 'rgba(102, 126, 234, 0.8)',
+                                borderColor: 'rgba(102, 126, 234, 1)',
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false } },
+                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                        }
+                    });
+                }
                 
                 const watchlistChart = new Chart(document.getElementById('watchlist-chart'), {
                     type: 'doughnut',
                     data: {
                         labels: ['Watched', 'Unwatched'],
                         datasets: [{
-                            data: [stats.watched, stats.unwatched],
+                            data: [stats.watched || 0, stats.unwatched || 0],
                             backgroundColor: ['rgba(46, 213, 115, 0.8)', 'rgba(255, 159, 64, 0.8)'],
                             borderColor: ['rgba(46, 213, 115, 1)', 'rgba(255, 159, 64, 1)'],
                             borderWidth: 2
@@ -1027,7 +1079,9 @@ async def dashboard_home(request):
                 const watchedRes = await fetch('/api/watched-movies');
                 const watched = await watchedRes.json();
                 const watchedList = document.getElementById('watched-list');
-                watchedList.innerHTML = watched.map(movie => `
+                
+                if (Array.isArray(watched) && watched.length > 0 && !watched.error) {
+                    watchedList.innerHTML = watched.map(movie => `
                     <div class="watched-item">
                         <div class="watched-info">
                             <div class="watched-title">${movie.title}</div>
@@ -1037,9 +1091,20 @@ async def dashboard_home(request):
                             </div>
                             ${movie.comment ? `<div class="watched-meta" style="margin-top: 5px;">"${movie.comment}"</div>` : ''}
                         </div>
-                        ${movie.rating ? `<div class="watched-rating">${movie.rating} ⭐</div>` : ''}
+                        <div class="watched-rating-container">
+                            ${movie.rating ? `<div class="watched-rating">${movie.rating.toFixed(1)} ⭐</div>` : ''}
+                            <div class="star-rating" data-movie-id="${movie.tmdb_id}" data-user-id="${movie.user_id || 1}" data-current-rating="${movie.rating || 0}">
+                                ${[1, 2, 3, 4, 5].map(star => `
+                                    <span class="star ${(movie.rating || 0) >= star ? 'filled' : ''}" 
+                                          onclick="rateMovie(${movie.tmdb_id}, ${movie.user_id || 1}, ${star})">★</span>
+                                `).join('')}
+                            </div>
+                        </div>
                     </div>
                 `).join('');
+                } else {
+                    watchedList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No watched movies yet. Add movies to your watchlist!</div>';
+                }
                 
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('dashboard').style.display = 'block';
@@ -1049,6 +1114,30 @@ async def dashboard_home(request):
                 document.getElementById('loading').textContent = 'Error loading dashboard: ' + error.message;
             }
         }
+        
+        async function rateMovie(movieId, userId, rating) {
+            try {
+                const response = await fetch('/api/rate-movie', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId, movie_id: movieId, rating: rating })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    // Reload dashboard to show updated rating
+                    await loadDashboard();
+                } else {
+                    console.error('Error rating movie:', result.error);
+                    alert('Failed to rate movie: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error rating movie:', error);
+                alert('Failed to rate movie: ' + error.message);
+            }
+        }
+        
         loadDashboard();
     </script>
 </body>
@@ -1067,7 +1156,8 @@ async def api_watched_movies(request):
             r.rating,
             r.review as comment,
             r.created_at as rated_at,
-            u.name as username
+            u.name as username,
+            w.user_id
         FROM watchlist w
         JOIN movies m ON w.movie_id = m.tmdb_id
         LEFT JOIN ratings r ON w.user_id = r.user_id AND w.movie_id = r.movie_id
@@ -1077,15 +1167,49 @@ async def api_watched_movies(request):
         LIMIT 50
         """
         results = lakebase.run_query(query)
-        # Convert datetime objects to strings
+        # Convert datetime objects to strings and ratings to float
         for row in results:
             if row.get('rated_at'):
                 row['rated_at'] = row['rated_at'].isoformat() if hasattr(row['rated_at'], 'isoformat') else str(row['rated_at'])
             if row.get('release_date'):
                 row['release_date'] = str(row['release_date'])
+            # Ensure rating is a number or null (not Decimal)
+            if row.get('rating') is not None:
+                row['rating'] = float(row['rating'])
         return JSONResponse(results)
     except Exception as e:
         logger.exception(f"Error fetching watched movies: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+async def api_rate_movie(request):
+    """Rate a movie."""
+    try:
+        data = await request.json()
+        user_id = data.get('user_id')
+        movie_id = data.get('movie_id')
+        rating = data.get('rating')
+        review = data.get('review', '')
+        
+        if not user_id or not movie_id or rating is None:
+            return JSONResponse({"error": "user_id, movie_id, and rating are required"}, status_code=400)
+        
+        if not (0 <= rating <= 5):
+            return JSONResponse({"error": "Rating must be between 0 and 5"}, status_code=400)
+        
+        # Insert or update rating
+        lakebase.run_write(
+            """
+            INSERT INTO ratings (user_id, movie_id, rating, review, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, movie_id) 
+            DO UPDATE SET rating = EXCLUDED.rating, review = EXCLUDED.review, updated_at = EXCLUDED.updated_at
+            """,
+            (user_id, movie_id, rating, review, datetime.now(), datetime.now())
+        )
+        
+        return JSONResponse({"success": True, "message": "Rating saved successfully"})
+    except Exception as e:
+        logger.exception(f"Error rating movie: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 async def api_top_rated(request):
@@ -1147,6 +1271,10 @@ async def api_rating_distribution(request):
         ORDER BY rating_floor
         """
         results = lakebase.run_query(query)
+        # Convert Decimal to int for rating_floor
+        for row in results:
+            if row.get('rating_floor') is not None:
+                row['rating_floor'] = int(row['rating_floor'])
         return JSONResponse(results)
     except Exception as e:
         logger.exception(f"Error fetching rating distribution: {e}")
@@ -1232,6 +1360,13 @@ async def groups_page(request):
                         <textarea id="groupDescription" rows="3" placeholder="Weekly movie night with friends"></textarea>
                     </div>
                     <div class="form-group">
+                        <label>Created By *</label>
+                        <select id="groupCreator" required>
+                            <option value="">-- Select who is creating this group --</option>
+                            <!-- Will be populated with users -->
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label>Add Member</label>
                         <select id="groupMembers" class="member-selector">
                             <option value="">-- Select a member to add (optional) --</option>
@@ -1262,6 +1397,13 @@ async def groups_page(request):
                     const response = await fetch('/api/users');
                     allUsers = await response.json();
                     
+                    // Populate the creator dropdown
+                    const creatorSelect = document.getElementById('groupCreator');
+                    creatorSelect.innerHTML = '<option value="">-- Select who is creating this group --</option>' + 
+                        allUsers.map(u => 
+                            `<option value="${u.id}">${u.name} (${u.email})</option>`
+                        ).join('');
+                    
                     // Populate the create group form members dropdown
                     const membersSelect = document.getElementById('groupMembers');
                     membersSelect.innerHTML = '<option value="">-- Select a member to add (optional) --</option>' + 
@@ -1279,6 +1421,12 @@ async def groups_page(request):
                     const groups = await response.json();
                     
                     const container = document.getElementById('groupsList');
+                    
+                    // Guard against non-array responses (API errors, etc.)
+                    if (!Array.isArray(groups)) {
+                        container.innerHTML = `<p style="color: #e74c3c;">Error loading groups: ${groups.error || 'Invalid response from server'}</p>`;
+                        return;
+                    }
                     
                     if (groups.length === 0) {
                         container.innerHTML = '<p style="color: #666; text-align: center;">No groups yet. Create one above!</p>';
@@ -1410,14 +1558,20 @@ async def groups_page(request):
                 
                 const name = document.getElementById('groupName').value;
                 const description = document.getElementById('groupDescription').value;
+                const createdBy = document.getElementById('groupCreator').value;
                 const selectedMemberId = document.getElementById('groupMembers').value;
+                
+                if (!createdBy) {
+                    showMessage('❌ Please select who is creating this group', 'error');
+                    return;
+                }
                 
                 try {
                     // First create the group
                     const response = await fetch('/api/groups/create', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ name, description, created_by: 1 })
+                        body: JSON.stringify({ name, description, created_by: parseInt(createdBy) })
                     });
                     
                     const result = await response.json();
@@ -1737,15 +1891,29 @@ async def api_create_group(request):
         data = await request.json()
         name = data.get('name')
         description = data.get('description', '')
-        created_by = data.get('created_by', 1)  # Default to user 1
+        created_by = data.get('created_by')  # User must select themselves from dropdown
         
         if not name:
             return JSONResponse({"error": "Group name is required"}, status_code=400)
         
+        if not created_by:
+            return JSONResponse({"error": "Please select who is creating this group"}, status_code=400)
+        
+        # Verify user exists
+        existing_users = lakebase.run_query(
+            "SELECT id FROM users WHERE id = %s",
+            (created_by,)
+        )
+        
+        if not existing_users:
+            return JSONResponse({"error": "Selected user does not exist"}, status_code=400)
+        
+        user_id = created_by
+        
         # Create group
         lakebase.run_write(
             "INSERT INTO groups (name, description, created_by, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
-            (name, description, created_by, datetime.now())
+            (name, description, user_id, datetime.now())
         )
         
         # Get the created group
@@ -1757,9 +1925,10 @@ async def api_create_group(request):
         # Add creator as admin
         lakebase.run_write(
             "INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (%s, %s, 'admin', %s)",
-            (group['id'], created_by, datetime.now())
+            (group['id'], user_id, datetime.now())
         )
         
+        logger.info(f"Created group '{name}' (ID: {group['id']}) by user ID {user_id}")
         return JSONResponse({"success": True, "group": group})
     except Exception as e:
         logger.exception(f"Error creating group: {e}")
@@ -1836,12 +2005,13 @@ app.routes.insert(0, Route("/", dashboard_home))
 app.routes.insert(1, Route("/groups", groups_page))
 app.routes.insert(2, Route("/recommendations", recommendations_page))
 app.routes.insert(3, Route("/api/watched-movies", api_watched_movies))
-app.routes.insert(4, Route("/api/top-rated", api_top_rated))
-app.routes.insert(5, Route("/api/watchlist-stats", api_watchlist_stats))
-app.routes.insert(6, Route("/api/rating-distribution", api_rating_distribution))
-app.routes.insert(7, Route("/api/groups", api_groups))
-app.routes.insert(8, Route("/api/groups/{group_id}/members", api_group_members))
-app.routes.insert(9, Route("/api/groups/create", api_create_group, methods=["POST"]))
-app.routes.insert(10, Route("/api/groups/add-member", api_add_member, methods=["POST"]))
-app.routes.insert(11, Route("/api/groups/remove-member", api_remove_member, methods=["POST"]))
-app.routes.insert(12, Route("/api/users", api_all_users))
+app.routes.insert(4, Route("/api/rate-movie", api_rate_movie, methods=["POST"]))
+app.routes.insert(5, Route("/api/top-rated", api_top_rated))
+app.routes.insert(6, Route("/api/watchlist-stats", api_watchlist_stats))
+app.routes.insert(7, Route("/api/rating-distribution", api_rating_distribution))
+app.routes.insert(8, Route("/api/groups", api_groups))
+app.routes.insert(9, Route("/api/groups/{group_id}/members", api_group_members))
+app.routes.insert(10, Route("/api/groups/create", api_create_group, methods=["POST"]))
+app.routes.insert(11, Route("/api/groups/add-member", api_add_member, methods=["POST"]))
+app.routes.insert(12, Route("/api/groups/remove-member", api_remove_member, methods=["POST"]))
+app.routes.insert(13, Route("/api/users", api_all_users))

@@ -16,7 +16,7 @@ This MCP (Model Context Protocol) server exposes movie planning tools that can b
 
 1. **Secrets configured** (via `setup_secrets.py`):
    * `movie-planner/tmdb-access-token` - TMDB Bearer token
-   * `database/lakebase-url` - Lakebase connection URL
+   * `database/mcp-movie-lakebase-url` - Lakebase connection URL
 
 2. **Database setup**:
    * Lakebase project, branch, and endpoint created
@@ -46,7 +46,7 @@ pip install -r requirements.txt
 
 # Set environment variables (or use Databricks secrets)
 export LAKEBASE_SECRET_SCOPE=database
-export LAKEBASE_SECRET_KEY=lakebase-url
+export LAKEBASE_SECRET_KEY=mcp-movie-lakebase-url
 export TMDB_SECRET_SCOPE=movie-planner
 export TMDB_SECRET_KEY=tmdb-access-token
 

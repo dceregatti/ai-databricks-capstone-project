@@ -233,9 +233,9 @@ databricks secrets delete-secret movie-planner tmdb-api-key
 
 Once your secrets are set up:
 
-1. Run the [setup_and_test.py](setup_and_test.py) notebook
+1. Deploy the MCP server app (see main README.md)
 2. The code will automatically use your secrets
-3. Start building your movie recommendation system!
+3. Start using the movie recommendation system!
 
 ## Questions?
 

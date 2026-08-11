@@ -1,6 +1,6 @@
 # AI Movie Night Planner
 
-An AI-powered movie recommendation system that helps groups find the perfect movie to watch together. Built on Databricks with Lakebase Postgres, TMDB API, and semantic search using OpenAI embeddings.
+An AI-powered movie recommendation system exposing movie search and recommendation tools via Model Context Protocol (MCP). Built on Databricks with Lakebase Postgres, TMDB API, and semantic search using sentence-transformers embeddings.
 
 ## Overview
 
@@ -19,9 +19,10 @@ Users create groups, rate movies, describe what they want to watch, and ask an A
 * Each user needs a free API key from https://www.themoviedb.org/settings/api
 
 ### AI Components
-1. **Embeddings**: OpenAI text-embedding-ada-002 (1536 dimensions)
+1. **Embeddings**: sentence-transformers/all-MiniLM-L6-v2 (384 dimensions)
 2. **Context Engineering**: Combines plot summaries, keywords, cast, genres for rich semantic search
-3. **Vector Search**: Cosine similarity on movie embeddings
+3. **Vector Search**: pgvector cosine distance on movie embeddings
+4. **MCP Server**: FastMCP server exposing tools for Databricks Agents
 
 ## Features
 
@@ -38,53 +39,88 @@ Users create groups, rate movies, describe what they want to watch, and ask an A
 
 ```
 ai-databricks-capstone-project/
-├── database/
-│   └── schema.sql              # Database schema with pgvector support
-├── src/
-│   ├── db_connection.py        # Lakebase Postgres connection manager
-│   ├── tmdb_client.py          # TMDB API client
-│   ├── embeddings.py           # OpenAI embedding generator
-│   └── recommendation_engine.py # AI recommendation engine
-├── setup_and_test.py        # Setup and testing notebook
-├── .env                     # Environment variables (not committed)
-├── .gitignore
-└── README.md
+├── mcp_server/                   # ⭐ MCP Server (authoritative)
+│   ├── movie_mcp_server.py       # FastMCP server with tools
+│   ├── tmdb_client.py            # TMDB API client with retry logic
+│   ├── lakebase.py               # Database connection module
+│   ├── schema.sql                # ✅ Authoritative database schema
+│   ├── app.yaml                  # Databricks App deployment config
+│   ├── requirements.txt          # ✅ Authoritative dependencies
+│   └── README.md                 # MCP server documentation
+├── jobs/                         # Production-ready jobs
+│   ├── ingest_and_embed_movies.py # Idempotent ingestion job
+│   └── README.md                 # Job documentation
+├── tests/                        # Integration tests
+│   ├── test_integration.py       # End-to-end test suite
+│   └── README.md                 # Testing documentation
+├── database/                     # Database documentation
+│   └── README.md                 # Schema and setup info
+├── screenshots/                  # UI screenshots
+├── DEPENDENCIES.md               # Dependency information
+├── SETUP_SECRETS.md              # Secret configuration guide
+├── setup_database.py             # Database initialization notebook
+├── setup_secrets.py              # Secrets setup script
+└── README.md                     # This file
 ```
 
-## Setup Instructions
+## Quick Start
 
 ### 1. Prerequisites
 
 * Databricks workspace with serverless compute
-* TMDB API key (free): https://www.themoviedb.org/settings/api
-* OpenAI API key: https://platform.openai.com/api-keys
+* Lakebase Postgres project and endpoint
+* TMDB access token (free): https://www.themoviedb.org/settings/api
 
-### 2. Environment Configuration
+### 2. Configure Secrets
 
-Create a `.env` file in the project root:
+Set up Databricks secrets (see `SETUP_SECRETS.md` for details):
 
 ```bash
-TMDB_API_KEY=your_tmdb_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
+databricks secrets put-secret movie-planner tmdb-access-token
+databricks secrets put-secret database mcp-movie-lakebase-url
 ```
 
-### 3. Database Setup
+The Lakebase URL should be: `postgresql://user:password@host:port/database`
 
-The Lakebase Postgres project is already created:
-* Project: `movie-night-planner`
-* Branch: `production`
-* Endpoint: `primary`
-* Database: `databricks_postgres`
+### 3. Initialize Database
 
-### 4. Run Setup Notebook
+Run the schema initialization:
 
-Open and run `setup_and_test.py` notebook to:
-1. Install dependencies
-2. Initialize database schema
-3. Create test users and groups
-4. Fetch sample movies from TMDB
-5. Generate embeddings
-6. Test recommendations
+```bash
+psql $LAKEBASE_URL < mcp_server/schema.sql
+```
+
+### 4. Deploy MCP Server
+
+Deploy as a Databricks App:
+
+```bash
+cd mcp_server
+databricks apps create mcp-movie-planner
+databricks apps deploy mcp-movie-planner --source-code-path .
+```
+
+See `mcp_server/README.md` for detailed instructions.
+
+### 5. Run Ingestion Job
+
+Populate the database with movies:
+
+```bash
+python jobs/ingest_and_embed_movies.py
+```
+
+Or schedule as a Databricks Job (see `jobs/README.md`).
+
+### 6. Run Integration Tests
+
+Verify everything works:
+
+```bash
+python tests/test_integration.py
+```
+
+See `tests/README.md` for details.
 
 ## Usage Examples
 
@@ -170,10 +206,11 @@ for movie in comparison:
 
 ### Key Features
 
-* **pgvector**: Vector similarity search on 1536-dim embeddings
-* **JSONB**: Flexible storage for genres, cast, keywords, streaming providers
+* **pgvector**: Vector similarity search on 384-dim embeddings
+* **JSONB**: Flexible storage for genres, cast, keywords
 * **Foreign Keys**: Referential integrity with cascade deletes
-* **Indexes**: Optimized for common queries
+* **Indexes**: IVFFlat index on embeddings for fast similarity search
+* **Idempotency**: UPSERT logic (INSERT ... ON CONFLICT) for safe re-runs
 
 ## API Reference
 

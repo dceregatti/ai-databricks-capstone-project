@@ -17,7 +17,7 @@ from sqlalchemy import create_engine
 _w = None  # Lazy-loaded WorkspaceClient
 
 _SCOPE = os.environ.get("LAKEBASE_SECRET_SCOPE", "database")
-_KEY = os.environ.get("LAKEBASE_SECRET_KEY", "lakebase-url")
+_KEY = os.environ.get("LAKEBASE_SECRET_KEY", "mcp-movie-lakebase-url")
 
 
 def _get_workspace_client():
